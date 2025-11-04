@@ -33,6 +33,7 @@ APIキーを複数利用した並列実行と途中再開機能を備える。
 | 主なライブラリ | `google-generativeai`, `pandas`, `numpy`, `scikit-learn`, `python-dotenv`, `tqdm` |
 | 並列実行 | Gemini APIキー4つをラウンドロビンで分散実行 |
 | 環境変数管理 | `.env` ファイルによるAPIキー管理 |
+| 依存関係管理 | `pyproject.toml` と `uv.lock` |
 
 ---
 
@@ -138,11 +139,49 @@ APIキーを複数利用した並列実行と途中再開機能を備える。
 
 ---
 
-## 11. ファイル構成例
+## 11. セットアップ
+
+### 1. uvのインストール
+
+Pythonのパッケージマネージャーである`uv`をインストールします。
+
+```bash
+pip install uv
+```
+
+### 2. 仮想環境の作成とアクティベート
+
+プロジェクトルートに移動し、`uv`で仮想環境を作成します。
+
+```bash
+uv venv
+```
+
+### 3. 依存関係のインストール
+
+`pyproject.toml`に定義されている依存関係をインストールします。
+
+```bash
+uv pip install
+```
+
+---
+
+## 12. 実行方法
+
+```bash
+uv run python csv_content_matcher.py A_company.csv B_company.csv
+```
+
+---
+
+## 13. ファイル構成例
 
 ```
 project_root/
-├─ compare_contents.py
+├─ csv_content_matcher.py
+├─ pyproject.toml
+├─ uv.lock
 ├─ .env
 ├─ A_company.csv
 ├─ B_company.csv
@@ -154,7 +193,7 @@ project_root/
 
 ---
 
-## 12. セキュリティ要件
+## 14. セキュリティ要件
 
 - `.env` ファイルは `.gitignore` に登録し、ソース管理から除外する  
 - APIキーをコード内に直接記述しない  
@@ -162,12 +201,14 @@ project_root/
 
 ---
 
-## 13. 成果物一覧
+## 15. 成果物一覧
 
 | ファイル名 | 説明 |
 |-------------|------|
-| `compare_contents.py` | 類似度算出スクリプト |
+| `csv_content_matcher.py` | 類似度算出スクリプト |
 | `b_embeddings.pkl` | B社コンテンツのEmbeddingキャッシュ |
 | `match_results.csv` | A社⇔B社の類似度マッピング結果 |
 | `logs/run_*.log` | 実行時の詳細ログ |
 | `.env` | Gemini APIキー格納ファイル |
+| `pyproject.toml` | プロジェクトのメタデータと依存関係を定義 |
+| `uv.lock` | 依存関係の正確なバージョンをロックするファイル |
