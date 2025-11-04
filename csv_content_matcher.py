@@ -75,31 +75,34 @@ def prepare_input2_embeddings(input2_csv_path):
         logging.info("Loading cached 入力CSV2 embeddings...")
         with open(INPUT2_EMBED_FILE, "rb") as f:
             data = pickle.load(f)
-        return data["items"], data["embeddings"]
+        return data["items"], data["embeddings"], data["embedding_status"]
 
     logging.info("Generating 入力CSV2 embeddings...")
     input2_df = pd.read_csv(input2_csv_path, header=None)
     input2_items = input2_df[0].astype(str).tolist()
     input2_embeddings = []
-    
+    input2_embedding_status = [] # Track success/failure
+
     # 入力CSV2は件数が少ないので1つのキーで処理
     key = API_KEYS[0]
     for item in tqdm(input2_items, desc="Embedding 入力CSV2"):
         emb, _ = get_embedding(item, key)
         if emb is not None:
             input2_embeddings.append(emb)
+            input2_embedding_status.append(True)
         else:
             input2_embeddings.append(np.zeros(768))
+            input2_embedding_status.append(False)
     
     input2_embeddings = np.vstack(input2_embeddings)
     with open(INPUT2_EMBED_FILE, "wb") as f:
-        pickle.dump({"items": input2_items, "embeddings": input2_embeddings}, f)
-    return input2_items, input2_embeddings
+        pickle.dump({"items": input2_items, "embeddings": input2_embeddings, "embedding_status": input2_embedding_status}, f)
+    return input2_items, input2_embeddings, input2_embedding_status
 
 # ===============================
 # 入力CSV1のチャンク処理（並列対応版）
 # ===============================
-async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, api_key):
+async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, input2_embedding_status, api_key):
     start = time.time()
     results = []
     key_tail = api_key[-6:]
@@ -117,21 +120,29 @@ async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, 
 
     # 結果を集計
     input1_embeddings = []
+    input1_embedding_status = [] # Track success/failure
     for (emb, used_key), item in zip(embeddings_with_keys, input1_list):
         if emb is not None:
             input1_embeddings.append(emb)
+            input1_embedding_status.append(True)
             async with USAGE_LOCK:
                 KEY_USAGE[used_key] = KEY_USAGE.get(used_key, 0) + 1
         else:
             input1_embeddings.append(np.zeros(input2_embeddings.shape[1]))
+            input1_embedding_status.append(False)
 
     input1_embeddings = np.vstack(input1_embeddings)
     sims = cosine_similarity(input1_embeddings, input2_embeddings)
 
     # 類似度の高い入力CSV2項目を特定
-    for input1_text, sim_row in zip(input1_list, sims):
+    for i, (input1_text, sim_row) in enumerate(zip(input1_list, sims)):
         top_idx = np.argmax(sim_row)
         top_score = sim_row[top_idx]
+
+        # Handle cases where embedding failed for either input1 or input2
+        if not input1_embedding_status[i] or not input2_embedding_status[top_idx]:
+            top_score = 0.0 # Set similarity to 0 if either embedding failed
+            
         results.append({
             "入力CSV1項目名": input1_text,
             "入力CSV2項目名": input2_items[top_idx],
@@ -157,7 +168,7 @@ async def main(input1_csv_path, input2_csv_path):
     logging.info(f"チャンクサイズ: {CHUNK_SIZE}件")
 
     # --- 入力CSV2準備 ---
-    input2_items, input2_embeddings = prepare_input2_embeddings(input2_csv_path)
+    input2_items, input2_embeddings, input2_embedding_status = prepare_input2_embeddings(input2_csv_path)
 
     # --- 入力CSV1読み込み ---
     input1_df = pd.read_csv(input1_csv_path, header=None)
@@ -203,7 +214,7 @@ async def main(input1_csv_path, input2_csv_path):
         tasks = []
         for idx, (chunk_id, chunk_data) in enumerate(batch):
             api_key = API_KEYS[idx % len(API_KEYS)]
-            tasks.append(process_chunk(chunk_id, chunk_data, input2_items, input2_embeddings, api_key))
+            tasks.append(process_chunk(chunk_id, chunk_data, input2_items, input2_embeddings, input2_embedding_status, api_key))
         
         # 並列実行
         results = await asyncio.gather(*tasks)
