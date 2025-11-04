@@ -42,9 +42,9 @@ API_KEYS = [
 API_KEYS = [k for k in API_KEYS if k]
 MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
 
-CHUNK_SIZE = int(os.getenv("A_CHUNK_SIZE", "500"))
+CHUNK_SIZE = int(os.getenv("INPUT1_CHUNK_SIZE", "500"))
 OUTPUT_CSV = os.getenv("OUTPUT_CSV", "match_results.csv")
-B_EMBED_FILE = "b_embeddings.pkl"
+INPUT2_EMBED_FILE = "input2_embeddings.pkl"
 
 # 各キーの利用カウンタ（スレッドセーフ）
 KEY_USAGE = {key[-6:]: 0 for key in API_KEYS}
@@ -68,80 +68,80 @@ def get_embedding(text, api_key, retries=3, delay=2):
     return None, key_tail
 
 # ===============================
-# B社データ読み込み or キャッシュ生成
+# 入力CSV2データ読み込み or キャッシュ生成
 # ===============================
-def prepare_b_embeddings(b_csv_path):
-    if os.path.exists(B_EMBED_FILE):
-        logging.info("📦 Loading cached B社 embeddings...")
-        with open(B_EMBED_FILE, "rb") as f:
+def prepare_input2_embeddings(input2_csv_path):
+    if os.path.exists(INPUT2_EMBED_FILE):
+        logging.info("📦 Loading cached 入力CSV2 embeddings...")
+        with open(INPUT2_EMBED_FILE, "rb") as f:
             data = pickle.load(f)
-        return data["titles"], data["embeddings"]
+        return data["items"], data["embeddings"]
 
-    logging.info("⚙️ Generating B社 embeddings...")
-    b_df = pd.read_csv(b_csv_path, header=None)
-    b_titles = b_df[0].astype(str).tolist()
-    b_embeddings = []
+    logging.info("⚙️ Generating 入力CSV2 embeddings...")
+    input2_df = pd.read_csv(input2_csv_path, header=None)
+    input2_items = input2_df[0].astype(str).tolist()
+    input2_embeddings = []
     
-    # B社は件数が少ないので1つのキーで処理
+    # 入力CSV2は件数が少ないので1つのキーで処理
     key = API_KEYS[0]
-    for title in tqdm(b_titles, desc="Embedding B社"):
-        emb, _ = get_embedding(title, key)
+    for item in tqdm(input2_items, desc="Embedding 入力CSV2"):
+        emb, _ = get_embedding(item, key)
         if emb is not None:
-            b_embeddings.append(emb)
+            input2_embeddings.append(emb)
         else:
-            b_embeddings.append(np.zeros(768))
+            input2_embeddings.append(np.zeros(768))
     
-    b_embeddings = np.vstack(b_embeddings)
-    with open(B_EMBED_FILE, "wb") as f:
-        pickle.dump({"titles": b_titles, "embeddings": b_embeddings}, f)
-    return b_titles, b_embeddings
+    input2_embeddings = np.vstack(input2_embeddings)
+    with open(INPUT2_EMBED_FILE, "wb") as f:
+        pickle.dump({"items": input2_items, "embeddings": input2_embeddings}, f)
+    return input2_items, input2_embeddings
 
 # ===============================
-# A社のチャンク処理（並列対応版）
+# 入力CSV1のチャンク処理（並列対応版）
 # ===============================
-async def process_chunk(chunk_id, a_list, b_titles, b_embeddings, api_key):
+async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, api_key):
     start = time.time()
     results = []
     key_tail = api_key[-6:]
 
-    logging.info(f"🔷 Chunk {chunk_id} 開始 ({len(a_list)} 件) [Key: {key_tail}]")
+    logging.info(f"🔷 Chunk {chunk_id} 開始 ({len(input1_list)} 件) [Key: {key_tail}]")
 
     # 並列でEmbedding取得
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=10) as executor:
         tasks = [
-            loop.run_in_executor(executor, get_embedding, title, api_key)
-            for title in a_list
+            loop.run_in_executor(executor, get_embedding, item, api_key)
+            for item in input1_list
         ]
         embeddings_with_keys = await asyncio.gather(*tasks)
 
     # 結果を集計
-    a_embeddings = []
-    for (emb, used_key), title in zip(embeddings_with_keys, a_list):
+    input1_embeddings = []
+    for (emb, used_key), item in zip(embeddings_with_keys, input1_list):
         if emb is not None:
-            a_embeddings.append(emb)
+            input1_embeddings.append(emb)
             async with USAGE_LOCK:
                 KEY_USAGE[used_key] = KEY_USAGE.get(used_key, 0) + 1
         else:
-            a_embeddings.append(np.zeros(b_embeddings.shape[1]))
+            input1_embeddings.append(np.zeros(input2_embeddings.shape[1]))
 
-    a_embeddings = np.vstack(a_embeddings)
-    sims = cosine_similarity(a_embeddings, b_embeddings)
+    input1_embeddings = np.vstack(input1_embeddings)
+    sims = cosine_similarity(input1_embeddings, input2_embeddings)
 
-    # 類似度の高いB社コンテンツを特定
-    for a_text, sim_row in zip(a_list, sims):
+    # 類似度の高い入力CSV2項目を特定
+    for input1_text, sim_row in zip(input1_list, sims):
         top_idx = np.argmax(sim_row)
         top_score = sim_row[top_idx]
         results.append({
-            "A社コンテンツ名": a_text,
-            "B社コンテンツ名": b_titles[top_idx],
+            "入力CSV1項目名": input1_text,
+            "入力CSV2項目名": input2_items[top_idx],
             "類似度": round(float(top_score), 4)
         })
 
     elapsed = time.time() - start
-    avg_time = elapsed / len(a_list)
+    avg_time = elapsed / len(input1_list)
     logging.info(
-        f"✅ Chunk {chunk_id} 完了 ({len(a_list)} items) | "
+        f"✅ Chunk {chunk_id} 完了 ({len(input1_list)} items) | "
         f"Time: {elapsed:.1f}s | Avg/item: {avg_time:.2f}s [Key: {key_tail}]"
     )
     
@@ -150,36 +150,36 @@ async def process_chunk(chunk_id, a_list, b_titles, b_embeddings, api_key):
 # ===============================
 # メイン処理
 # ===============================
-async def main(a_csv_path, b_csv_path):
+async def main(input1_csv_path, input2_csv_path):
     start_time = time.time()
-    logging.info("===== E-Learning コンテンツ比較開始 =====")
+    logging.info("===== CSV項目類似度比較ツール 開始 =====")
     logging.info(f"🔑 使用APIキー数: {len(API_KEYS)}")
     logging.info(f"📦 チャンクサイズ: {CHUNK_SIZE}件")
 
-    # --- B社準備 ---
-    b_titles, b_embeddings = prepare_b_embeddings(b_csv_path)
+    # --- 入力CSV2準備 ---
+    input2_items, input2_embeddings = prepare_input2_embeddings(input2_csv_path)
 
-    # --- A社読み込み ---
-    a_df = pd.read_csv(a_csv_path, header=None)
-    a_titles = a_df[0].astype(str).tolist()
+    # --- 入力CSV1読み込み ---
+    input1_df = pd.read_csv(input1_csv_path, header=None)
+    input1_items = input1_df[0].astype(str).tolist()
 
     # --- 途中再開対応 ---
-    done_titles = set()
+    done_items = set()
     if os.path.exists(OUTPUT_CSV):
         try:
             done_df = pd.read_csv(OUTPUT_CSV)
             # カラム名を確認（複数のパターンに対応）
-            if "A社コンテンツ名" in done_df.columns:
-                done_titles = set(done_df["A社コンテンツ名"].tolist())
+            if "入力CSV1項目名" in done_df.columns:
+                done_items = set(done_df["入力CSV1項目名"].tolist())
             elif done_df.columns[0]:  # 最初のカラムを使用
-                done_titles = set(done_df.iloc[:, 0].tolist())
-            logging.info(f"🔄 {len(done_titles)}件は既に処理済み。スキップします。")
+                done_items = set(done_df.iloc[:, 0].tolist())
+            logging.info(f"🔄 {len(done_items)}件は既に処理済み。スキップします。")
         except Exception as e:
             logging.warning(f"⚠️ 既存CSVの読み込みに失敗: {e}")
             logging.info("💡 既存CSVを削除するか、ファイル名を変更して再実行してください。")
             logging.info("🔄 最初から処理を開始します。")
 
-    remaining = [t for t in a_titles if t not in done_titles]
+    remaining = [t for t in input1_items if t not in done_items]
     total = len(remaining)
     logging.info(f"🚀 残り {total} 件を処理開始します。")
 
@@ -203,7 +203,7 @@ async def main(a_csv_path, b_csv_path):
         tasks = []
         for idx, (chunk_id, chunk_data) in enumerate(batch):
             api_key = API_KEYS[idx % len(API_KEYS)]
-            tasks.append(process_chunk(chunk_id, chunk_data, b_titles, b_embeddings, api_key))
+            tasks.append(process_chunk(chunk_id, chunk_data, input2_items, input2_embeddings, api_key))
         
         # 並列実行
         results = await asyncio.gather(*tasks)
@@ -244,8 +244,7 @@ async def main(a_csv_path, b_csv_path):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 3:
-        print("Usage: python csv_content_matcher.py A_company.csv B_company.csv")
+        print("Usage: python csv_content_matcher.py input1.csv input2.csv")
         exit(1)
 
     asyncio.run(main(sys.argv[1], sys.argv[2]))
-    
