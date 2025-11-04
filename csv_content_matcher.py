@@ -72,12 +72,12 @@ def get_embedding(text, api_key, retries=3, delay=2):
 # ===============================
 def prepare_input2_embeddings(input2_csv_path):
     if os.path.exists(INPUT2_EMBED_FILE):
-        logging.info("📦 Loading cached 入力CSV2 embeddings...")
+        logging.info("Loading cached 入力CSV2 embeddings...")
         with open(INPUT2_EMBED_FILE, "rb") as f:
             data = pickle.load(f)
         return data["items"], data["embeddings"]
 
-    logging.info("⚙️ Generating 入力CSV2 embeddings...")
+    logging.info("Generating 入力CSV2 embeddings...")
     input2_df = pd.read_csv(input2_csv_path, header=None)
     input2_items = input2_df[0].astype(str).tolist()
     input2_embeddings = []
@@ -104,7 +104,7 @@ async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, 
     results = []
     key_tail = api_key[-6:]
 
-    logging.info(f"🔷 Chunk {chunk_id} 開始 ({len(input1_list)} 件) [Key: {key_tail}]")
+    logging.info(f"Chunk {chunk_id} 開始 ({len(input1_list)} 件) [Key: {key_tail}]")
 
     # 並列でEmbedding取得
     loop = asyncio.get_event_loop()
@@ -141,7 +141,7 @@ async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, 
     elapsed = time.time() - start
     avg_time = elapsed / len(input1_list)
     logging.info(
-        f"✅ Chunk {chunk_id} 完了 ({len(input1_list)} items) | "
+        f"Chunk {chunk_id} 完了 ({len(input1_list)} items) | "
         f"Time: {elapsed:.1f}s | Avg/item: {avg_time:.2f}s [Key: {key_tail}]"
     )
     
@@ -153,8 +153,8 @@ async def process_chunk(chunk_id, input1_list, input2_items, input2_embeddings, 
 async def main(input1_csv_path, input2_csv_path):
     start_time = time.time()
     logging.info("===== CSV項目類似度比較ツール 開始 =====")
-    logging.info(f"🔑 使用APIキー数: {len(API_KEYS)}")
-    logging.info(f"📦 チャンクサイズ: {CHUNK_SIZE}件")
+    logging.info(f"使用APIキー数: {len(API_KEYS)}")
+    logging.info(f"チャンクサイズ: {CHUNK_SIZE}件")
 
     # --- 入力CSV2準備 ---
     input2_items, input2_embeddings = prepare_input2_embeddings(input2_csv_path)
@@ -173,15 +173,15 @@ async def main(input1_csv_path, input2_csv_path):
                 done_items = set(done_df["入力CSV1項目名"].tolist())
             elif done_df.columns[0]:  # 最初のカラムを使用
                 done_items = set(done_df.iloc[:, 0].tolist())
-            logging.info(f"🔄 {len(done_items)}件は既に処理済み。スキップします。")
+            logging.info(f"{len(done_items)}件は既に処理済み。スキップします。")
         except Exception as e:
-            logging.warning(f"⚠️ 既存CSVの読み込みに失敗: {e}")
-            logging.info("💡 既存CSVを削除するか、ファイル名を変更して再実行してください。")
-            logging.info("🔄 最初から処理を開始します。")
+            logging.warning(f"既存CSVの読み込みに失敗: {e}")
+            logging.info("既存CSVを削除するか、ファイル名を変更して再実行してください。")
+            logging.info("最初から処理を開始します。")
 
     remaining = [t for t in input1_items if t not in done_items]
     total = len(remaining)
-    logging.info(f"🚀 残り {total} 件を処理開始します。")
+    logging.info(f"残り {total} 件を処理開始します。")
 
     # チャンクを作成
     chunks = []
@@ -224,19 +224,19 @@ async def main(input1_csv_path, input2_csv_path):
         eta = (total - processed_count) / speed if speed > 0 else 0
 
         logging.info(
-            f"📊 進捗 {processed_count}/{total} "
+            f"進捗 {processed_count}/{total} "
             f"({processed_count/total*100:.1f}%) | "
             f"速度: {speed:.2f}件/秒 | 残り推定: {eta/60:.1f}分"
         )
         async with USAGE_LOCK:
             logging.info(
-                "🔑 API使用状況: " + ", ".join([f"{k}:{v}" for k, v in KEY_USAGE.items()])
+                "API使用状況: " + ", ".join([f"{k}:{v}" for k, v in KEY_USAGE.items()])
             )
 
     total_time = time.time() - start_time
-    logging.info(f"🎉 全処理完了！総時間: {total_time/60:.1f}分")
-    logging.info(f"📄 結果ファイル: {OUTPUT_CSV}")
-    logging.info(f"📝 ログファイル: {log_file}")
+    logging.info(f"全処理完了！総時間: {total_time/60:.1f}分")
+    logging.info(f"結果ファイル: {OUTPUT_CSV}")
+    logging.info(f"ログファイル: {log_file}")
 
 # ===============================
 # 実行
